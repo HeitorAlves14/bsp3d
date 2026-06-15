@@ -1,4 +1,5 @@
 import numpy as np
+import math
 
 class Player:
     def __init__(self, x, y, z, largura=1.0, altura=2.0):
@@ -18,6 +19,14 @@ class Player:
         self.shake_intensidade = 0.0
         self.shake_decay = 0.9
         self.shake_offset = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        # --- SISTEMA DE COMBATE ---
+        self.esta_atirando = False
+        self.timer_tiro = 0
+        self.dano_arma = 35
+        # --- STATUS DO JOGADOR ---
+        self.vida = 100
+        self.municao = 20
+        self.chaves = [] # Lista de chaves coletadas (ex: ['vermelha', 'azul'])
 
         
     def obter_aabb(self, pos_especifica=None):
@@ -124,6 +133,75 @@ class Player:
         if self.on_ground:
             self.velocidade_y = self.forca_pulo
             self.on_ground = False
+    
+    def disparar_raio(self, yaw, pitch, lista_inimigos):
+        """Dispara um raio do centro da câmera e verifica se acertou algum inimigo"""
+        # 1. Calcula o vetor direção 3D para onde o jogador está olhando
+        yaw_rad = math.radians(yaw)
+        pitch_rad = math.radians(pitch)
+        
+        dir_x = math.cos(yaw_rad) * math.cos(pitch_rad)
+        dir_y = math.sin(pitch_rad)
+        dir_z = math.sin(yaw_rad) * math.cos(pitch_rad)
+        direcao_raio = np.array([dir_x, dir_y, dir_z], dtype=np.float32)
+        
+        origem_raio = np.copy(self.pos)
+        origem_raio[1] += self.altura * 0.8 # Altura dos olhos do jogador
+
+        inimigo_atingido = None
+        menor_distancia = float('inf')
+
+        # 2. Testa contra a AABB de cada inimigo
+        for inimigo in lista_inimigos:
+            b_min, b_max = inimigo.obter_aabb()
+            
+            # Algoritmo de intersecção Raio-AABB
+            tmin = (b_min[0] - origem_raio[0]) / direcao_raio[0] if direcao_raio[0] != 0 else float('-inf')
+            tmax = (b_max[0] - origem_raio[0]) / direcao_raio[0] if direcao_raio[0] != 0 else float('inf')
+            if tmin > tmax: tmin, tmax = tmax, tmin
+
+            tymin = (b_min[1] - origem_raio[1]) / direcao_raio[1] if direcao_raio[1] != 0 else float('-inf')
+            tymax = (b_max[1] - origem_raio[1]) / direcao_raio[1] if direcao_raio[1] != 0 else float('inf')
+            if tymin > tymax: tymin, tymax = tymax, tymin
+
+            if (tmin > tymax) or (tymin > tmax): continue
+            if tymin > tmin: tmin = tymin
+            if tymax < tmax: tmax = tymax
+
+            tzmin = (b_min[2] - origem_raio[2]) / direcao_raio[2] if direcao_raio[2] != 0 else float('-inf')
+            tzmax = (b_max[2] - origem_raio[2]) / direcao_raio[2] if direcao_raio[2] != 0 else float('inf')
+            if tzmin > tzmax: tzmin, tzmax = tzmax, tzmin
+
+            if (tmin > tzmax) or (tzmin > max(tmin, tmax)): continue
+            if tzmin > tmin: tmin = tzmin
+            if tzmax < tmax: tmax = tzmax
+
+            # Se tmax > 0, o raio interceptou a caixa do inimigo!
+            if tmax > 0 and tmin < menor_distancia:
+                menor_distancia = tmin
+                inimigo_atingido = inimigo
+
+        # 3. Aplica o dano se acertou alguém
+        # ... (cálculo de intersecção Raio-AABB anterior) ...
+
+        # 3. Aplica o dano se acertou alguém
+        if inimigo_atingido:
+            inimigo_atingido.vida -= self.dano_arma
+            print(f"[Combate] Acertou o inimigo! Vida restante: {inimigo_atingido.vida}")
+            
+            # RETORNA A POSIÇÃO DO IMPACTO PARA GERAR AS PARTÍCULAS
+            # Usamos a posição central estimada do impacto no monstro
+            pos_impacto = np.copy(inimigo_atingido.pos)
+            pos_impacto[1] += inimigo_atingido.altura * 0.5 # Altura do peito
+            
+            if inimigo_atingido.vida <= 0:
+                print("[Combate] Inimigo Eliminado!")
+                lista_inimigos.remove(inimigo_atingido)
+                return pos_impacto, True # Impacto fatal
+                
+            return pos_impacto, False # Impacto normal
+            
+        return None, False # Errou o tiro
     
     def iniciar_shake(self, intensidade=0.2):
         self.shake_intensidade = intensidade
