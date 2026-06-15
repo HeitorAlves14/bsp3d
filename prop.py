@@ -1,10 +1,14 @@
 import numpy as np
 from OpenGL.GL import *
+from collections import defaultdict
 
 class Prop:
     def __init__(self, nome, triangulos_locais, posicao_global):
         self.nome = nome
         self.triangulos_locais = triangulos_locais # Recebe os triângulos já processados
+        self._grupos_por_textura = defaultdict(list)
+        for t in self.triangulos_locais:
+            self._grupos_por_textura[t.textura_id].append(t)
         self.pos_original = np.array(posicao_global, dtype=np.float32)
         self.pos = np.array(posicao_global, dtype=np.float32)
         self.pos_alvo = np.array(posicao_global, dtype=np.float32)
@@ -139,21 +143,21 @@ class Prop:
     def renderizar(self, frustum):
         g_min, g_max = self.obter_aabb_global()
         centro = (g_min + g_max) / 2.0
-        
-        # Culling de Frustum para o objeto inteiro
-        if not frustum.ponto_visivel(centro[0], centro[1], centro[2]):
-            return 
+        if not frustum.ponto_visivel(*centro):
+            return
 
         glPushMatrix()
-        # Move o objeto para a posição onde ele foi colocado no Blender
-        glTranslatef(self.pos[0], self.pos[1], self.pos[2])
-        
-        for t in self.triangulos_locais:
-            glBindTexture(GL_TEXTURE_2D, t.textura_id)
+        glTranslatef(*self.pos)
+
+        # Agrupa por textura — 1 draw call por material em vez de 1 por triângulo
+
+        for tex_id, triangulos in self._grupos_por_textura.items():
+            glBindTexture(GL_TEXTURE_2D, tex_id)
             glBegin(GL_TRIANGLES)
-            for v in t.vertices:
-                glTexCoord2f(v.uv[0], v.uv[1])
-                glVertex3fv(v.pos)
+            for t in triangulos:
+                for v in t.vertices:
+                    glTexCoord2f(v.uv[0], v.uv[1])
+                    glVertex3fv(v.pos)
             glEnd()
-        
+
         glPopMatrix()
