@@ -9,27 +9,24 @@ class Player:
         self.altura_normal = altura
         self.altura_agachado = altura * 0.5
         # --- VARIÁVEIS DE FÍSICA ---
-        self.velocidade = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-        self.friccao = 0.85
         self.velocidade_y = 0.0
         self.on_ground = False
         self.forca_pulo = 0.25
         self.gravidade = 0.012
+        self.max_step_height = 0.35
         # --- VARIÁVEIS DE CAMERA ---
         self.shake_intensidade = 0.0
         self.shake_decay = 0.9
         self.shake_offset = np.array([0.0, 0.0, 0.0], dtype=np.float32)
 
         
-    def obter_aabb(self):
+    def obter_aabb(self, pos_especifica=None):
+        """Retorna os limites mínimos e máximos da AABB do jogador"""
+        posicao = self.pos if pos_especifica is None else pos_especifica
         meia_l = self.largura / 2.0
-        min_x = self.pos[0] - meia_l
-        max_x = self.pos[0] + meia_l
-        min_y = self.pos[1]
-        max_y = self.pos[1] + self.altura
-        min_z = self.pos[2] - meia_l
-        max_z = self.pos[2] + meia_l
-        return np.array([min_x, min_y, min_z]), np.array([max_x, max_y, max_z])
+        min_box = np.array([posicao[0] - meia_l, posicao[1], posicao[2] - meia_l])
+        max_box = np.array([posicao[0] + meia_l, posicao[1] + self.altura, posicao[2] + meia_l])
+        return min_box, max_box
 
     def _ponto_dentro_do_triangulo(self, p, a, b, c):
         """Usa o método dos produtos vetoriais para checar se o ponto P está dentro do triângulo ABC"""
@@ -95,7 +92,33 @@ class Player:
                 return True
                 
         return False
-    
+
+    def checar_colisao_com_props(self, lista_props, pos_teste):
+        """
+        Verifica se a AABB do jogador na 'pos_teste' está interceptando
+        a AABB global de algum dos objetos (props) do cenário.
+        """
+        meia_l = self.largura / 2.0
+        # Cria os limites da caixa do jogador para o teste
+        p_min = np.array([pos_teste[0] - meia_l, pos_teste[1], pos_teste[2] - meia_l])
+        p_max = np.array([pos_teste[0] + meia_l, pos_teste[1] + self.altura, pos_teste[2] + meia_l])
+
+        for prop in lista_props:
+            # Pega a caixa de colisão do objeto posicionada no mundo 3D
+            prop_min, prop_max = prop.obter_aabb_global()
+
+            # Teste de sobreposição AABB clássico:
+            # Se houver separação em QUALQUER um dos eixos, não há colisão.
+            colisao_x = p_max[0] >= prop_min[0] and p_min[0] <= prop_max[0]
+            colisao_y = p_max[1] >= prop_min[1] and p_min[1] <= prop_max[1]
+            colisao_z = p_max[2] >= prop_min[2] and p_min[2] <= prop_max[2]
+
+            # Se houver sobreposição simultânea em todos os eixos, colidiu!
+            if colisao_x and colisao_y and colisao_z:
+                return True # Colisão detectada com este prop específico
+
+        return False # Caminho livre de objetos
+
     def pular(self):
         """Ativa o pulo se o jogador estiver firmemente no chão"""
         if self.on_ground:

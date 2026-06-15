@@ -1,13 +1,15 @@
 import numpy as np
 
 class Vertice:
-    def __init__(self, x, y, z):
+    def __init__(self, x, y, z, u=0.0, v=0.0):
         self.pos = np.array([float(x), float(y), float(z)], dtype=np.float32)
+        self.uv = np.array([float(u), float(v)], dtype=np.float32) # Coordenadas de textura
 
 class Triangulo:
-    def __init__(self, v1, v2, v3, cor=None):
+    def __init__(self, v1, v2, v3, textura_id=0):
         self.vertices = [v1, v2, v3] # Lista de 3 objetos da classe Vertice
-        self.cor = cor if cor else [0.7, 0.7, 0.7] # Cor padrão caso não tenha material
+        # self.cor = cor if cor else [0.7, 0.7, 0.7] # Cor padrão caso não tenha material
+        self.textura_id = textura_id # ID numérico da textura gerada no OpenGL
         self.normal = self.calcular_normal()
         self.d = -np.dot(self.normal, self.vertices[0].pos)
 

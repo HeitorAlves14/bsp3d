@@ -107,16 +107,16 @@ def construir_arvore_bsp(triangulos):
 
     return no_atual
 
-def renderizar_bsp(no, pos_camera):
+def renderizar_bsp(no, pos_camera, frustum):
     """Percorre a árvore recursivamente e desenha os polígonos na ordem correta"""
     if no is None:
         return
 
     # Se chegamos a um nó folha que contém polígonos (se houver)
-    if no.divisor is None:
-        for t in no.poligonos:
-            desenhar_triangulo(t)
-        return
+    # if no.divisor is None:
+    #     for t in no.poligonos:
+    #         desenhar_triangulo(t)
+    #     return
 
     # Descobre de qual lado do plano do nó atual a câmera está
     lado_camera = no.divisor.classificar_ponto(pos_camera)
@@ -124,25 +124,35 @@ def renderizar_bsp(no, pos_camera):
     if lado_camera == 'FRENTE' or lado_camera == 'COPLANAR':
         # Se a câmera está na frente, o lado de trás está mais longe.
         # Renderizamos primeiro o que está longe (Trás), depois o nó atual, depois a Frente.
-        renderizar_bsp(no.back, pos_camera)
+        renderizar_bsp(no.back, pos_camera, frustum)
         
         for t in no.poligonos:
-            desenhar_triangulo(t)
+            if frustum.triangulo_visivel(t):
+                desenhar_triangulo(t)
             
-        renderizar_bsp(no.front, pos_camera)
+        renderizar_bsp(no.front, pos_camera, frustum)
     else:
         # Se a câmera está atrás, o lado da frente está mais longe.
-        renderizar_bsp(no.front, pos_camera)
+        renderizar_bsp(no.front, pos_camera, frustum)
         
         for t in no.poligonos:
-            desenhar_triangulo(t)
+            if frustum.triangulo_visivel(t):
+                desenhar_triangulo(t)
             
-        renderizar_bsp(no.back, pos_camera)
+        renderizar_bsp(no.back, pos_camera, frustum)
 
 def desenhar_triangulo(t):
     """Função auxiliar para enviar o triângulo ao OpenGL"""
+    glBindTexture(GL_TEXTURE_2D, t.textura_id)
+    
     glBegin(GL_TRIANGLES)
-    glColor3fv(t.cor)
     for v in t.vertices:
+        # Passa a coordenada UV da textura ANTES de passar o vértice correspondente
+        glTexCoord2f(v.uv[0], v.uv[1])
         glVertex3fv(v.pos)
     glEnd()
+    # glBegin(GL_TRIANGLES)
+    # glColor3fv(t.cor)
+    # for v in t.vertices:
+    #     glVertex3fv(v.pos)
+    # glEnd()

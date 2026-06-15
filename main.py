@@ -2,9 +2,11 @@ import pygame
 from pygame.locals import *
 from OpenGL.GL import *
 from OpenGL.GLU import *
-from paser_obj import carregar_obj
+from parser_obj import carregar_mapa_blender
+from gerenciador_textura import carregar_textura
 from bsp.bsp import construir_arvore_bsp, renderizar_bsp
 from player import Player
+from frustum import Frustum
 import math
 import numpy as np
 
@@ -16,16 +18,18 @@ LARGURA, ALTURA = 0, 0 # 800, 600
 # cam_x, cam_y, cam_z = 0.0, 0.0, 5.0
 # Rotação da câmera (Yaw: olhar para os lados, Pitch: olhar para cima/baixo)
 yaw, pitch = -90.0, 0.0
-velocidade_mov = 0.02
+velocidade_mov = 0.8
 sensibilidade_mouse = 0.1
 bob_amplitude = 0.05
 bob_speed = 8.0
 bob_phase = 0.0
 bob_offset = 0.0
 player = Player(x=0.0, y=0.0, z=0.0, largura=0.8, altura=1.8)
+frustum = Frustum()
 # Variável global para guardar o mapa
 triangulos_brutos = []
 mapa_triangulos = []
+lista_props = []
 arvore_bsp = None
 
 def inicializar_opengl():
@@ -68,13 +72,8 @@ def atualizar_camera():
     dir_z = math.sin(yaw_rad) * math.cos(pitch_rad)
     
     glLoadIdentity()
-    # gluLookAt(
-    #     player.pos[0], player.pos[1] + player.altura - 0.2, player.pos[2], 
-    #     player.pos[0] + dir_x, player.pos[1] + player.altura - 0.2 + dir_y, player.pos[2] + dir_z, 
-    #     0.0, 1.0, 0.0
-    # )
-    bob_phase += np.linalg.norm(player.velocidade) * 0.1
-    if np.linalg.norm(player.velocidade) > 0.01 and player.on_ground:
+    bob_phase += np.linalg.norm(player.velocidade_y) * 0.1
+    if np.linalg.norm(player.velocidade_y) > 0.01 and player.on_ground:
         target_offset = math.sin(bob_phase * bob_speed) * bob_amplitude
     else:
         target_offset = 0.0
@@ -116,13 +115,12 @@ def processar_entrada():
     right = np.array([-math.sin(yaw_rad), 0.0, math.cos(yaw_rad)], dtype=np.float32)
     
     # Próxima posição pretendida
-    # pos_tentativa = np.copy(player.pos)
-    
-    velocidade_mov = 0.01 if keys[K_LSHIFT] else 0.03
-    if keys[K_w]: player.velocidade += forward * velocidade_mov
-    if keys[K_s]: player.velocidade -= forward * velocidade_mov
-    if keys[K_a]: player.velocidade -= right * velocidade_mov
-    if keys[K_d]: player.velocidade += right * velocidade_mov
+    velocidade_mov = 0.05 if keys[K_LSHIFT] else 0.1
+    pos_tentativa = np.copy(player.pos)
+    if keys[K_w]: pos_tentativa += forward * velocidade_mov # player.velocidade
+    if keys[K_s]: pos_tentativa -= forward * velocidade_mov
+    if keys[K_a]: pos_tentativa -= right * velocidade_mov
+    if keys[K_d]: pos_tentativa += right * velocidade_mov
     if keys[K_SPACE]: player.pular()
     if keys[K_LCTRL]:
         player.agachado = True
@@ -130,45 +128,56 @@ def processar_entrada():
     else:
         player.agachado = False
         player.altura = player.altura_normal
-    player.velocidade *= player.friccao
 
     # Próxima posição
-    pos_tentativa = player.pos + player.velocidade
-        
-    # Sistema de colisão por eixos separados (permite deslizar nas paredes!)
-    # Testa movimento no Eixo X
-    pos_teste_x = np.array([pos_tentativa[0], player.pos[1], player.pos[2]])
-    if not player.checar_colisao(triangulos_brutos, pos_teste_x):
-        player.pos[0] = pos_tentativa[0]
-        
-    # Testa movimento no Eixo Z
-    pos_teste_z = np.array([player.pos[0], player.pos[1], pos_tentativa[2]])
-    if not player.checar_colisao(triangulos_brutos, pos_teste_z):
-        player.pos[2] = pos_tentativa[2]
+    #pos_tentativa = player.pos + player.velocidade
+    # --- FUNÇÃO INTERNA AUXILIAR DE CHECAGEM DE COLISÃO ---
+    def colidiu_com_mundo_ou_props(posicao):
+        return (player.checar_colisao(triangulos_brutos, posicao) or 
+                player.checar_colisao_com_props(lista_props, posicao))
 
-    # --- DEBUG DE VOO LIVRE ---
-    # Teclas de voo livre para Debug (Ignoram colisão vertical por enquanto)
-    # if keys[K_SPACE]:  player.pos[1] += velocidade_mov
-    # if keys[K_LSHIFT]: player.pos[1] -= velocidade_mov
-    # --- ... ---
+    # --- MOVIMENTAÇÃO COM SUPORTE A DEGRIOS E RAMPAS (STEP HEIGHT) ---
+    for eixo in [0, 2]: # Testa o Eixo X (0) e depois o Eixo Z (2) separado
+        pos_teste = np.copy(player.pos)
+        pos_teste[eixo] = pos_tentativa[eixo]
+        
+        # Se não colidir no plano normal, aceita o movimento direto
+        if not colidiu_com_mundo_ou_props(pos_teste):
+            player.pos[eixo] = pos_tentativa[eixo]
+        else:
+            # BATEU EM ALGO! Vamos tentar aplicar o Step Height (subir o degrau/rampa)
+            pos_subida = np.copy(player.pos)
+            pos_subida[1] += player.max_step_height # Eleva temporariamente em Y
+            pos_subida[eixo] = pos_tentativa[eixo] # Tenta avançar o eixo bloqueado
+            
+            # Se lá em cima estiver livre, significa que é um degrau ou rampa passável!
+            if not colidiu_com_mundo_ou_props(pos_subida):
+                # Agora, fazemos um "cast" para baixo para assentar o jogador na rampa de forma firme
+                pos_assentada = np.copy(pos_subida)
+                # Tenta descer o jogador de volta até ele encostar na superfície da rampa
+                for sub_passo in range(10):
+                    pos_assentada[1] -= (player.max_step_height / 10.0)
+                    if colidiu_com_mundo_ou_props(pos_assentada):
+                        # Se colidiu descendo, achamos a superfície da rampa!
+                        pos_assentada[1] += (player.max_step_height / 10.0) # Volta um tiquinho para não afundar
+                        break
+                
+                # Aplica as novas posições de X/Z e a nova altura Y da rampa
+                player.pos[eixo] = pos_subida[eixo]
+                player.pos[1] = pos_assentada[1]
+                player.on_ground = True
 
-    # 3. TESTE NO EIXO Y (FÍSICA VERTICAL: QUEDA E PULO)
-    # Movemos o jogador temporariamente no eixo Y de acordo com a sua velocidade atual
+    # 3. TESTE NO EIXO Y (QUEDA LIVRE E PULO)
     pos_teste_y = np.array([player.pos[0], player.pos[1] + player.velocidade_y, player.pos[2]])
-    
-    if not player.checar_colisao(triangulos_brutos, pos_teste_y):
-        # Se não colidiu com nada, ele está a mover-se no ar (a cair ou a subir no pulo)
+    if not colidiu_com_mundo_ou_props(pos_teste_y):
         player.pos[1] = pos_teste_y[1]
         player.on_ground = False
     else:
-        # Se colidiu movendo-se para baixo, significa que bateu no CHÃO
         if player.velocidade_y < 0:
             player.on_ground = True
-            # player.pos[1] = math.floor(player.pos[1])
             player.velocidade_y = 0.0
-        # Se colidiu movendo-se para cima, bateu com a cabeça no TETO
         elif player.velocidade_y > 0:
-            player.velocidade_y = 0.0 # Cancela o impulso para cima e começa a cair
+            player.velocidade_y = 0.0
     
     if player.shake_intensidade > 0.01:
         # Gera deslocamento aleatório em X e Y
@@ -195,14 +204,11 @@ def desenhar_entidades():
     glEnd()
 
 def main():
-    global yaw, pitch, triangulos_brutos, arvore_bsp
+    global yaw, pitch, triangulos_brutos, arvore_bsp, lista_props
     global LARGURA, ALTURA
     
     pygame.init()
     screen = pygame.display.set_mode((0,0), DOUBLEBUF | OPENGL | FULLSCREEN)
-    triangulos_brutos = carregar_obj("escritorio.obj")
-    mapa_triangulos = carregar_obj("osakat.obj")
-    arvore_bsp = construir_arvore_bsp(triangulos_brutos)
     pygame.display.set_caption("BSP Engine Engine - Debug Room")
     
     # Prende o mouse na janela e o esconde
@@ -212,7 +218,23 @@ def main():
     LARGURA, ALTURA = screen.get_size()
     
     inicializar_opengl()
+
     clock = pygame.time.Clock()
+
+    glEnable(GL_TEXTURE_2D) # Comando crucial que liga as texturas no OpenGL
+    
+    # Carregue qualquer imagem quadrada (ex: 256x256 ou 512x512 pixels) para teste 
+    
+    # Carrega o mapa passando o ID da textura
+    triangulos_brutos, lista_props = carregar_mapa_blender("nacht-der-untoten.obj")
+    
+    print("[BSP] Compilando árvore com suporte a texturas...")
+    arvore_bsp = construir_arvore_bsp(triangulos_brutos)
+    print("[BSP] Pronto!")
+    
+    # triangulos_brutos = carregar_obj("escritorio.obj")
+    # mapa_triangulos = carregar_obj("osakat.obj")
+    # arvore_bsp = construir_arvore_bsp(triangulos_brutos)
     
     executando = True
     while executando:
@@ -223,6 +245,15 @@ def main():
                 if event.key == K_ESCAPE:
                     executando = False
                 if event.key == K_e:
+                    for prop in lista_props:
+                        if prop.eh_porta:
+                            # Calcula a distância em linha reta entre o player e a porta
+                            distancia = np.linalg.norm(player.pos - prop.pos)
+                            
+                            # Se estiver a menos de 3 unidades de distância, ativa a porta!
+                            if distancia < 3.0:
+                                prop.interagir()
+                if event.key == K_q:
                     player.iniciar_shake()
                 
         # --- ROTAÇÃO COM O MOUSE ---
@@ -232,19 +263,20 @@ def main():
         
         # --- MOVIMENTAÇÃO ---
         processar_entrada()
+        for prop in lista_props:
+            prop.atualizar(player)
         
         # --- RENDERIZAÇÃO ---
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         
         atualizar_camera()
-        # desenhar_sala_debug()
-        # desenhar_mapa_blender()
-        # pos_camera = np.array([cam_x, cam_y, cam_z], dtype=np.float32)
-        # if len(triangulos_brutos) > 0:
-        #     lado = triangulos_brutos[0].classificar_ponto(pos_camera)
-        #     print(f"A câmera está na: {lado} do primeiro triângulo", end="\r")
-        desenhar_entidades()
-        renderizar_bsp(arvore_bsp, player.pos)
+        frustum.atualizar()
+        # 1. Desenha o chão e paredes ordenados e filtrados pelo Frustum na BSP
+        renderizar_bsp(arvore_bsp, player.pos, frustum)
+        # 2. Desenha os detalhes independentes (mesas, cadeiras) que também usam Culling de Frustum interno!
+        for objeto in lista_props:
+            objeto.renderizar(frustum)
+
         
         pygame.display.flip()
         clock.tick(60) # Mantém estável em 60 FPS
@@ -253,3 +285,44 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+    # Sistema de colisão por eixos separados (permite deslizar nas paredes!)
+    # Testa movimento no Eixo X
+    # pos_teste_x = np.array([pos_tentativa[0], player.pos[1], player.pos[2]])
+    # colisao_x_mapa = player.checar_colisao(triangulos_brutos, pos_teste_x)
+    # colisao_x_prop = player.checar_colisao_com_props(lista_props, pos_teste_x)
+    # if not (colisao_x_mapa or colisao_x_prop):
+    #     player.pos[0] = pos_tentativa[0]
+        
+    # # Testa movimento no Eixo Z
+    # pos_teste_z = np.array([player.pos[0], player.pos[1], pos_tentativa[2]])
+    # colisao_z_mapa = player.checar_colisao(triangulos_brutos, pos_teste_z)
+    # colisao_z_prop = player.checar_colisao_com_props(lista_props, pos_teste_z)
+    # if not (colisao_z_mapa or colisao_z_prop):
+    #     player.pos[2] = pos_tentativa[2]
+
+    # # --- DEBUG DE VOO LIVRE ---
+    # # Teclas de voo livre para Debug (Ignoram colisão vertical por enquanto)
+    # # if keys[K_SPACE]:  player.pos[1] += velocidade_mov
+    # # if keys[K_LSHIFT]: player.pos[1] -= velocidade_mov
+    # # --- ... ---
+
+    # # 3. TESTE NO EIXO Y (FÍSICA VERTICAL: QUEDA E PULO)
+    # # Movemos o jogador temporariamente no eixo Y de acordo com a sua velocidade atual
+    # pos_teste_y = np.array([player.pos[0], player.pos[1] + player.velocidade_y, player.pos[2]])
+    # colisao_y_mapa = player.checar_colisao(triangulos_brutos, pos_teste_y)
+    # colisao_y_prop = player.checar_colisao_com_props(lista_props, pos_teste_y)
+    
+    # if not (colisao_y_mapa or colisao_y_prop):
+    #     # Se não colidiu com nada, ele está a mover-se no ar (a cair ou a subir no pulo)
+    #     player.pos[1] = pos_teste_y[1]
+    #     player.on_ground = False
+    # else:
+    #     # Se colidiu movendo-se para baixo, significa que bateu no CHÃO
+    #     if player.velocidade_y < 0:
+    #         player.on_ground = True
+    #         # player.pos[1] = math.floor(player.pos[1])
+    #         player.velocidade_y = 0.0
+    #     # Se colidiu movendo-se para cima, bateu com a cabeça no TETO
+    #     elif player.velocidade_y > 0:
+    #         player.velocidade_y = 0.0 # Cancela o impulso para cima e começa a cair
