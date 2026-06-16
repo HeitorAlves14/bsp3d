@@ -14,7 +14,7 @@ class Inimigo(Ator):
     def __init__(self, x, y, z, textura_id, largura=0.8, altura=1.8):
         super().__init__(x, y, z, largura, altura)
         self.textura_id = textura_id
-        self.velocidade = 0.25
+        self.velocidade = 0.05
         self.vida       = 100
 
     # ------------------------------------------------------------------
