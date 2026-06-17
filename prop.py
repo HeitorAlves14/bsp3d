@@ -142,8 +142,7 @@ class Prop:
 
     def renderizar(self, frustum):
         g_min, g_max = self.obter_aabb_global()
-        centro = (g_min + g_max) / 2.0
-        if not frustum.ponto_visivel(*centro):
+        if not frustum.aabb_visivel(g_min, g_max):
             return
 
         glPushMatrix()

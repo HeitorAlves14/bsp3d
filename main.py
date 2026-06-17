@@ -170,7 +170,7 @@ def main():
     # Carregue qualquer imagem quadrada (ex: 256x256 ou 512x512 pixels) para teste 
     
     # Carrega o mapa passando o ID da textura
-    triangulos_brutos, lista_props = carregar_mapa_blender("teste.obj")
+    triangulos_brutos, lista_props = carregar_mapa_blender("rua.obj")
     
     # Carrega a imagem do monstro (garanta que o OpenGL esteja com GL_BLEND ativo para transparência!)
     id_tex_inimigo = carregar_textura("options.png")
