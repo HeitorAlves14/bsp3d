@@ -151,8 +151,3 @@ def desenhar_triangulo(t):
         glTexCoord2f(v.uv[0], v.uv[1])
         glVertex3fv(v.pos)
     glEnd()
-    # glBegin(GL_TRIANGLES)
-    # glColor3fv(t.cor)
-    # for v in t.vertices:
-    #     glVertex3fv(v.pos)
-    # glEnd()

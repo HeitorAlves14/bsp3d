@@ -1,7 +1,12 @@
 import pygame
+import math
+import numpy as np
+
 from pygame.locals import *
 from OpenGL.GL import *
 from OpenGL.GLU import *
+from PIL import Image
+
 from parser_obj import carregar_mapa_blender
 from gerenciador_textura import carregar_textura
 from bsp.bsp import construir_arvore_bsp, renderizar_bsp
@@ -11,16 +16,12 @@ from frustum import Frustum
 from hud import desenhar_arma_hud
 from particula import Particula
 from coletavel import Coletavel
-import math
-import numpy as np
+from shader_manager import GerenciadorShader, LuzPontual
+from renderer_shader import RendererBSP, RendererProps
+
 
 # --- CONFIGURAÇÕES DA JANELA ---
-LARGURA, ALTURA = 0, 0 # 800, 600
-
-# --- CONFIGURAÇÕES DA CÂMERA ---
-# Posição inicial no espaço (X, Y, Z)
-# cam_x, cam_y, cam_z = 0.0, 0.0, 5.0
-# Rotação da câmera (Yaw: olhar para os lados, Pitch: olhar para cima/baixo)
+LARGURA, ALTURA = 0, 0
 yaw, pitch = -90.0, 0.0
 vel_mov = 0.8
 sensibilidade_mouse = 0.1
@@ -38,6 +39,10 @@ lista_inimigos = []
 lista_particulas = []
 lista_coletaveis = []
 arvore_bsp = None
+# Shader
+shader_mgr = None
+renderer_bsp = None
+renderer_prop = None
 
 def inicializar_opengl():
     """Configura o estado inicial do OpenGL"""
@@ -66,7 +71,7 @@ def inicializar_opengl():
 
 def atualizar_camera():
     """Calcula a direção do vetor que a câmera está olhando e atualiza a matriz"""
-    global yaw, pitch, bob_phase, bob_offset #, cam_x, cam_y, cam_z 
+    global yaw, pitch, bob_phase, bob_offset
     
     # Limita o olhar para cima/baixo para não capotar a câmera
     pitch = max(-89.0, min(89.0, pitch))
@@ -147,7 +152,7 @@ def processar_entrada():
     player.atualizar_shake()
 
 def main():
-    global yaw, pitch, triangulos_brutos, arvore_bsp
+    global yaw, pitch, triangulos_brutos, arvore_bsp, shader_mgr
     global lista_coletaveis, lista_props, lista_inimigos, lista_particulas
     global LARGURA, ALTURA
     
@@ -195,10 +200,45 @@ def main():
     arvore_bsp = construir_arvore_bsp(triangulos_brutos)
     print("[BSP] Pronto!")
     
-    # triangulos_brutos = carregar_obj("escritorio.obj")
-    # mapa_triangulos = carregar_obj("osakat.obj")
-    # arvore_bsp = construir_arvore_bsp(triangulos_brutos)
+    shader_mgr = GerenciadorShader()
+
+    shader_mgr.usar()
+    shader_mgr.configurar_ambiente(cor=(0.10, 0.09, 0.15), forca=5.50)
+    shader_mgr.configurar_fog(inicio=50.0, fim=100.0, cor=(0.04, 0.03, 0.07))
+
+    luzes_sala = [
+        # Sala 1 — lâmpada fluorescente fria (corredor interno)
+        LuzPontual(
+            pos=(3.0, 2.5, -5.0),
+            cor=(0.80, 0.90, 1.00),   # branco-azulado
+            raio=8.0,
+            intensidade=1.4,
+        ),
+        # # Sala 2 — tocha na parede (sala medieval / dungeon)
+        # LuzPontual(
+        #     pos=(-8.0, 1.8, -12.0),
+        #     cor=(1.00, 0.50, 0.10),   # laranja fogo
+        #     raio=6.0,
+        #     intensidade=1.8,
+        # ),
+        # Sala 3 — luz de emergência (corredor de fuga)
+        # LuzPontual(
+        #     pos=(0.0, 2.5, 0.0),
+        #     cor=(1.00, 0.10, 0.05),   # vermelho emergência
+        #     raio=5.0,
+        #     intensidade=1.2,
+        # ),
+            # Adicione quantas quiser até MAX_POINT_LIGHTS (padrão = 8)
+    ]
+    shader_mgr.definir_luzes_sala(luzes_sala)
+    shader_mgr.parar()
+
     
+
+    renderer_bsp   = RendererBSP(arvore_bsp, shader_mgr)
+    renderer_props = RendererProps(lista_props, shader_mgr)
+    
+    sol_visivel = True
     executando = True
     while executando:
         for event in pygame.event.get():
@@ -256,17 +296,22 @@ def main():
         frustum.atualizar()
 
         # 1. Desenha o chão e paredes ordenados e filtrados pelo Frustum na BSP
-        renderizar_bsp(arvore_bsp, player.pos, frustum)
+        renderer_bsp.renderizar(
+            player.pos,
+            frustum,
+            direcao_sol=(0.0, 90.0, 0.0),   # ← ajuste para o ângulo do seu sol
+            sol_ativo=sol_visivel,
+        )
         # Gerencia o tempo que a animação de tiro fica na tela
         if player.esta_atirando:
             player.timer_tiro += 1
             if player.timer_tiro > 15: # ~1/4 de segundo de animação
                 player.esta_atirando = False
         
+        renderer_props.renderizar_todos(lista_props, frustum, sol_ativo=sol_visivel)
         for prop in lista_props:
-            prop.renderizar(frustum)
             prop.atualizar(player)
-            prop.renderizar(frustum)
+        
         for inimigo in lista_inimigos:
             inimigo.renderizar(frustum)
         for item in lista_coletaveis:

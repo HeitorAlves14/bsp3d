@@ -14,10 +14,13 @@ def carregar_textura(caminho_arquivo):
     glBindTexture(GL_TEXTURE_2D, tex_id)
 
     # Configura os filtros de renderização (importante para o visual retrô pixulado ou suave)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST) # GL_NEAREST dá efeito Pixel Art (Doom)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST) # GL_NEAREST dá efeito Pixel Art (Doom)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
     
     # Envia os dados de pixel para o OpenGL
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, largura, altura, 0, GL_RGBA, GL_UNSIGNED_BYTE, dados_textura)
+
+    # ALTERAÇÃO 2: Gera os Mipmaps automaticamente a partir dos dados que você acabou de enviar
+    glGenerateMipmap(GL_TEXTURE_2D)
     
     return tex_id
