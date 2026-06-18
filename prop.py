@@ -29,6 +29,8 @@ class Prop:
         
         # Calcula a caixa de colisão baseada nesses triângulos
         self.b_min, self.b_max = self._calcular_aabb_local()
+        # ... (no final do seu __init__ existente) ...
+        self.eh_bicicleta = "prop_bicicleta" in nome.lower()
     
     def _configurar_direcao_porta(self):
         """
@@ -160,3 +162,32 @@ class Prop:
             glEnd()
 
         glPopMatrix()
+    
+
+    def obter_direcao_x_local(self):
+        """
+        Retorna o vetor unitário que representa o eixo X positivo local do prop.
+        Se baseia na normal do primeiro triângulo para derivar uma orientação consistente.
+        """
+        if not self.triangulos_locais:
+            return np.array([1.0, 0.0, 0.0], dtype=np.float32)
+            
+        # Pega a normal do primeiro triângulo (geralmente aponta para Z ou Y local)
+        normal = self.triangulos_locais[0].normal
+        # Cria um vetor perpendicular estável (X local) usando o produto vetorial com o Up global
+        eixo_x = np.cross(np.array([0.0, 1.0, 0.0]), normal)
+        norma = np.linalg.norm(eixo_x)
+        
+        if norma != 0:
+            return (eixo_x / norma).astype(np.float32)
+        return np.array([1.0, 0.0, 0.0], dtype=np.float32)
+
+    def interagir_bicicleta(self, player):
+        """Prepara o jogador para montar na bicicleta e o anexa a ela."""
+        if self.eh_bicicleta and player.montado_em_prop is None:
+            player.montado_em_prop = self
+            # Posiciona o jogador exatamente no centro da bicicleta
+            player.pos = np.copy(self.pos)
+            player.on_ground = True
+            player.velocidade_y = 0.0
+            print(f"[Bicicleta] Player montou em {self.nome}")

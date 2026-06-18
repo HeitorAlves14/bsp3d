@@ -43,6 +43,24 @@ arvore_bsp = None
 shader_mgr = None
 renderer_bsp = None
 renderer_prop = None
+# --- SISTEMA DE VIEWPORT DA BICICLETA ---
+textura_snapshot = None
+tirou_snapshot = False
+
+def capturar_snapshot_tela(largura, altura):
+    """Lê os pixels atuais da tela e os transforma em uma textura OpenGL."""
+    # Aloca memória para os pixels
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+    dados_pixels = glReadPixels(0, 0, largura, altura, GL_RGBA, GL_UNSIGNED_BYTE)
+    
+    # Cria uma nova textura OpenGL para guardar o print
+    tex_id = glGenTextures(1)
+    glBindTexture(GL_TEXTURE_2D, tex_id)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+    
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, largura, altura, 0, GL_RGBA, GL_UNSIGNED_BYTE, dados_pixels)
+    return tex_id
 
 def inicializar_opengl():
     """Configura o estado inicial do OpenGL"""
@@ -72,6 +90,37 @@ def inicializar_opengl():
 def atualizar_camera():
     """Calcula a direção do vetor que a câmera está olhando e atualiza a matriz"""
     global yaw, pitch, bob_phase, bob_offset
+    if player.montado_em_prop is not None:
+        glLoadIdentity()
+        bicicleta = player.montado_em_prop
+        
+        # Obtém o vetor X positivo local da bicicleta
+        dir_x_local = bicicleta.obter_direcao_x_local()
+        
+        # 15 graus para baixo em radianos
+        pitch_fixo = math.radians(-15.0)
+        
+        # Rotaciona o vetor de direção ligeiramente para baixo
+        # Como dir_x_local está no plano horizontal (X, Z), aplicamos o pitch no eixo Y
+        dir_x = dir_x_local[0] * math.cos(pitch_fixo)
+        dir_y = math.sin(pitch_fixo)
+        dir_z = dir_x_local[2] * math.cos(pitch_fixo)
+        
+        # Atualiza o yaw/pitch global para que ao sair, a câmera não dê um "solavanco"
+        yaw = math.degrees(math.atan2(dir_z, dir_x))
+        pitch = -15.0
+
+        # Posiciona a câmera fixa nos olhos do jogador sobre a bicicleta
+        gluLookAt(
+            player.pos[0],
+            player.pos[1] + player.altura - 0.2,
+            player.pos[2],
+            player.pos[0] + dir_x,
+            player.pos[1] + player.altura - 0.2 + dir_y,
+            player.pos[2] + dir_z,
+            0.0, 1.0, 0.0
+        )
+        return # Sai mais cedo, ignorando a lógica comum de câmera e bobbing
     
     # Limita o olhar para cima/baixo para não capotar a câmera
     pitch = max(-89.0, min(89.0, pitch))
@@ -246,16 +295,24 @@ def main():
                 executando = False
             if event.type == KEYDOWN:
                 if event.key == K_ESCAPE:
-                    executando = False
+                    if player.montado_em_prop is not None:
+                        # Teleporta o player 2 metros acima (Y) da bicicleta
+                        player.pos[0] += 2.0
+                        player.montado_em_prop = None
+                        print("[Bicicleta] Player desmontou. Teleportado 2m acima.")
+                    else:
+                        executando = False
                 if event.key == K_e:
-                    for prop in lista_props:
-                        if prop.eh_porta:
-                            # Calcula a distância em linha reta entre o player e a porta
+                    if player.montado_em_prop is None:
+                        for prop in lista_props:
                             distancia = np.linalg.norm(player.pos - prop.pos)
-                            
-                            # Se estiver a menos de 3 unidades de distância, ativa a porta!
                             if distancia < 3.0:
-                                prop.interagir()
+                                if prop.eh_porta:
+                                    prop.interagir()
+                                # NOVA CONDIÇÃO: Interagir com a Bicicleta
+                                elif prop.eh_bicicleta:
+                                    prop.interagir_bicicleta(player)
+                                    break
                 if event.key == K_q:
                     player.iniciar_shake()
 
