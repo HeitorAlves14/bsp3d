@@ -29,8 +29,6 @@ class Prop:
         
         # Calcula a caixa de colisão baseada nesses triângulos
         self.b_min, self.b_max = self._calcular_aabb_local()
-        # ... (no final do seu __init__ existente) ...
-        self.eh_bicicleta = "prop_bicicleta" in nome.lower()
     
     def _configurar_direcao_porta(self):
         """
@@ -60,8 +58,12 @@ class Prop:
         sinal = -1.0 if '-' in self.nome else 1.0
         
         # Se a tag pedir movimento vertical (ex: door+y ou door-y), ignoramos a diagonal horizontal
+        if 'x' in self.nome.lower():
+            vetor_movimento = np.array([1.0, 0.0, 0.0]) * sinal
         if 'y' in self.nome.lower():
             vetor_movimento = np.array([0.0, 1.0, 0.0]) * sinal
+        if 'z' in self.nome.lower():
+            vetor_movimento = np.array([0.0, 0.0, 1.0]) * sinal
         else:
             # Caso contrário, ela corre no seu próprio eixo horizontal calculado!
             vetor_movimento = direcao_deslizamento * sinal
@@ -141,53 +143,3 @@ class Prop:
 
     def obter_aabb_global(self):
         return self.b_min + self.pos, self.b_max + self.pos
-
-    def renderizar(self, frustum):
-        g_min, g_max = self.obter_aabb_global()
-        if not frustum.aabb_visivel(g_min, g_max):
-            return
-
-        glPushMatrix()
-        glTranslatef(*self.pos)
-
-        # Agrupa por textura — 1 draw call por material em vez de 1 por triângulo
-
-        for tex_id, triangulos in self._grupos_por_textura.items():
-            glBindTexture(GL_TEXTURE_2D, tex_id)
-            glBegin(GL_TRIANGLES)
-            for t in triangulos:
-                for v in t.vertices:
-                    glTexCoord2f(v.uv[0], v.uv[1])
-                    glVertex3fv(v.pos)
-            glEnd()
-
-        glPopMatrix()
-    
-
-    def obter_direcao_x_local(self):
-        """
-        Retorna o vetor unitário que representa o eixo X positivo local do prop.
-        Se baseia na normal do primeiro triângulo para derivar uma orientação consistente.
-        """
-        if not self.triangulos_locais:
-            return np.array([1.0, 0.0, 0.0], dtype=np.float32)
-            
-        # Pega a normal do primeiro triângulo (geralmente aponta para Z ou Y local)
-        normal = self.triangulos_locais[0].normal
-        # Cria um vetor perpendicular estável (X local) usando o produto vetorial com o Up global
-        eixo_x = np.cross(np.array([0.0, 1.0, 0.0]), normal)
-        norma = np.linalg.norm(eixo_x)
-        
-        if norma != 0:
-            return (eixo_x / norma).astype(np.float32)
-        return np.array([1.0, 0.0, 0.0], dtype=np.float32)
-
-    def interagir_bicicleta(self, player):
-        """Prepara o jogador para montar na bicicleta e o anexa a ela."""
-        if self.eh_bicicleta and player.montado_em_prop is None:
-            player.montado_em_prop = self
-            # Posiciona o jogador exatamente no centro da bicicleta
-            player.pos = np.copy(self.pos)
-            player.on_ground = True
-            player.velocidade_y = 0.0
-            print(f"[Bicicleta] Player montou em {self.nome}")

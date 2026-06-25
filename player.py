@@ -41,8 +41,6 @@ class Player(Ator):
         # --- Velocidade horizontal (para o bob de câmera) ---
         self.velocidade = np.zeros(3, dtype=np.float32)
         self.friccao    = 0.85
-        # --- Estado de Veículo / Montaria ---
-        self.montado_em_prop = None  # Guarda a instância do Prop quando montado
 
     # ------------------------------------------------------------------
     # Pulo
