@@ -1,7 +1,6 @@
 import pygame
 import math
 import numpy as np
-import pickle
 
 from pygame.locals import *
 from OpenGL.GL import *
@@ -9,7 +8,7 @@ from OpenGL.GLU import *
 
 from parser_obj import carregar_mapa_blender
 from gerenciador_textura import carregar_textura
-from bsp.bsp import construir_arvore_bsp
+from bsp.bsp import construir_arvore_bsp, coletar_triangulos_proximos
 from player import Player
 from inimigo import Inimigo
 from frustum import Frustum
@@ -29,6 +28,7 @@ bob_amplitude = 0.05
 bob_speed = 8.0
 bob_phase = 0.0
 bob_offset = 0.0
+RAIO_COLISAO = 2
 player = Player(x=0.0, y=0.0, z=0.0, largura=0.8, altura=1.8)
 frustum = Frustum()
 # Variável global para guardar o mapa
@@ -88,29 +88,23 @@ def atualizar_camera():
     dir_z = math.sin(yaw_rad) * math.cos(pitch_rad)
     
     glLoadIdentity()
-    bob_phase += np.linalg.norm(player.velocidade_y) * 0.1
-    if np.linalg.norm(player.velocidade_y) > 0.01 and player.on_ground:
-        target_offset = math.sin(bob_phase * bob_speed) * bob_amplitude
-    else:
-        target_offset = 0.0
-
-    # interpolação suave
+    vel_h = getattr(player, '_vel_horiz', 0.0)
+    bob_phase += vel_h * 0.5
+    target_offset = math.sin(bob_phase * bob_speed) * bob_amplitude if (player.on_ground and vel_h > 0.001) else 0.0
     bob_offset = bob_offset * 0.9 + target_offset * 0.1
-
+ 
+    sx, sy, sz = player.shake_offset
+    eye_y = player.pos[1] + player.altura - 0.2 + bob_offset
     gluLookAt(
-        player.pos[0] + player.shake_offset[0],
-        player.pos[1] + player.altura - 0.2 + bob_offset + player.shake_offset[1],
-        player.pos[2] + player.shake_offset[2],
-        player.pos[0] + dir_x + player.shake_offset[0],
-        player.pos[1] + player.altura - 0.2 + dir_y + bob_offset + player.shake_offset[1],
-        player.pos[2] + dir_z + player.shake_offset[2],
+        player.pos[0] + sx, eye_y + sy,          player.pos[2] + sz,
+        player.pos[0] + dir_x + sx, eye_y + dir_y + sy, player.pos[2] + dir_z + sz,
         0.0, 1.0, 0.0
     )
 
 
-def processar_entrada():
+def processar_entrada(tri_player):
     """Gerencia a movimentação livre baseada nas teclas pressionadas"""
-    global yaw, triangulos_brutos
+    global yaw
     
     keys     = pygame.key.get_pressed()
     yaw_rad  = math.radians(yaw)
@@ -136,19 +130,13 @@ def processar_entrada():
 
     # Movimento horizontal por eixos separados (deslizamento em paredes)
     pos_x = np.array([pos_tentativa[0], player.pos[1], player.pos[2]])
-    if not (player.checar_colisao(triangulos_brutos, pos_x) or 
-            player.checar_colisao_com_props(lista_props, pos_x)):
-        player.pos[0] = pos_tentativa[0]
+    
  
     pos_z = np.array([player.pos[0], player.pos[1], pos_tentativa[2]])
-    if not (player.checar_colisao(triangulos_brutos, pos_z) or 
-            player.checar_colisao_com_props(lista_props, pos_z)):
-        player.pos[2] = pos_tentativa[2]
-    
-    player.mover_horizontal_com_step(triangulos_brutos, lista_props, pos_x, pos_z)
+    player.mover_horizontal_com_step(tri_player, lista_props, pos_x, pos_z)
  
     # Física vertical (gravidade + pulo) — delegado para Ator via Player
-    player.atualizar_fisica_vertical(triangulos_brutos, lista_props)
+    player.atualizar_fisica_vertical(tri_player, lista_props)
  
     # Câmera shake
     player.atualizar_shake()
@@ -272,17 +260,20 @@ def main():
         mouse_dx, mouse_dy = pygame.mouse.get_rel()
         yaw += mouse_dx * sensibilidade_mouse
         pitch -= mouse_dy * sensibilidade_mouse # Invertido para o olhar padrão FPS
+        tri_player = coletar_triangulos_proximos(arvore_bsp, player.pos, RAIO_COLISAO)
         
         # --- MOVIMENTAÇÃO ---
-        processar_entrada()
-        for prop in lista_props: prop.atualizar(player)
-        # pos_player_atual = np.array([player.pos[0], player.pos[1], player.pos[2]], dtype=np.float32)
+        processar_entrada(tri_player)
+        for prop in lista_props:
+            prop.atualizar(player)
         for inimigo in lista_inimigos:
-            inimigo.atualizar_ia(player, triangulos_brutos, lista_props, lista_inimigos)
-        lista_coletaveis = [item for item in lista_coletaveis if not item.atualizar(player)]
+            tri_inimigo = coletar_triangulos_proximos(arvore_bsp, inimigo.pos, RAIO_COLISAO)
+            inimigo.atualizar_ia(player, tri_inimigo, lista_props, lista_inimigos)
+
+        lista_coletaveis = [c for c in lista_coletaveis if not c.atualizar(player)]
         lista_particulas = [p for p in lista_particulas if p.atualizar()]
         # --- RENDERIZAÇÃO ---
-        # glClear(GL_COLOR_BUFFER_BIT)
+        glClear(GL_COLOR_BUFFER_BIT)
         glClear(GL_DEPTH_BUFFER_BIT)
         atualizar_camera()
         frustum.atualizar()
@@ -301,16 +292,15 @@ def main():
                 player.esta_atirando = False
         
         renderer_props.renderizar_todos(lista_props, frustum, sol_ativo=sol_visivel)
-        for prop in lista_props:
-            prop.atualizar(player)
-        
+
         for inimigo in lista_inimigos:
             inimigo.renderizar(frustum)
         for item in lista_coletaveis:
             item.renderizar(frustum)
+
         glPushAttrib(GL_CURRENT_BIT)
-        for particula in lista_particulas:
-            particula.renderizar()
+        for p in lista_particulas:
+            p.renderizar()
         glPopAttrib()
             
         # NOVO: Desenha a arma 2D na tela por cima do cenário 3D

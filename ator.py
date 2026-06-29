@@ -22,7 +22,7 @@ class Ator:
         self.max_velocidade_queda = 0.5
 
         # --- Step-up: altura máxima de degrau/rampa que sobe automaticamente ---
-        self.max_step_height = 0.4  # unidades — ajuste conforme escala do mapa
+        self.max_step_height = 0.5  # unidades — ajuste conforme escala do mapa
 
     # ------------------------------------------------------------------
     # AABB
@@ -99,10 +99,16 @@ class Ator:
 
             # --- 2. Teste fino: projeta cada canto no plano do triângulo ---
             v1, v2, v3 = t.vertices[0].pos, t.vertices[1].pos, t.vertices[2].pos
+
+            # Threshold de proximidade separado por orientação do triângulo:
+            # - Superfícies horizontais (chão/teto): usa altura do ator como margem
+            # - Superfícies verticais (paredes): usa largura
+            normal_y = abs(t.normal[1])
+            threshold = self.altura if normal_y > 0.5 else self.largura
+
             for canto in cantos:
                 dist = np.dot(t.normal, canto) + t.d
-                # Só testa cantos que estão perto / atravessando o plano
-                if abs(dist) > self.largura:
+                if abs(dist) > threshold:
                     continue
                 projetado = canto - t.normal * dist
                 if self._ponto_dentro_do_triangulo(projetado, v1, v2, v3):

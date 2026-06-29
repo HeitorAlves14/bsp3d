@@ -63,8 +63,7 @@ class RendererBSP:
     def __init__(self, arvore_bsp, shader_mgr, tabela_pvs=None):
         self.arvore  = arvore_bsp
         self.shader  = shader_mgr
-        # Armazena a tabela PVS (pode ser um dicionário que mapeia folha_id -> lista de folhas visíveis)
-        self.tabela_pvs = tabela_pvs 
+        self.tabela_pvs = tabela_pvs # Suporte opcional à tabela PVS
         
         print("[Renderer] Inicializando e gerando VBOs locais para a árvore BSP…")
         self._gerar_vbos_da_arvore(self.arvore)
@@ -92,10 +91,10 @@ class RendererBSP:
             ativo=sol_ativo,
         )
         
-        # --- NOVO: DETERMINA A FOLHA ATUAL DO JOGADOR ---
+        # Encontra a folha onde a câmera está pisando
         folha_atual = determinar_folha_ponto(self.arvore, pos_camera)
         
-        # Inicia a travessia estrita passando a folha_atual obtida pelo classificar_ponto interno
+        # Inicia a travessia passando o parâmetro da folha
         self._percorrer_bsp(self.arvore, pos_camera, frustum, folha_atual)
         self.shader.parar()
 
@@ -103,21 +102,25 @@ class RendererBSP:
         if no is None:
             return
         
-        # --- FILTRO PVS ---
-        # Se a tabela PVS existir e este nó for uma folha invisível para a folha_atual, descarte imediatamente
+        # --- 1. CORTAR VIA PVS (Se ativo) ---
         if self.tabela_pvs and no.is_leaf():
             visiveis = self.tabela_pvs.get(folha_atual, [])
             if no.folha_id not in visiveis:
-                return # PVS barrou! Não renderiza nada desta sub-árvore/folha.
+                return
 
-        # --- CORREÇÃO DO ERRO ---
-        # Se o nó for uma folha legítima (espaço vazio), ele não tem plano divisor.
-        # Desenhamos os polígonos coplanares dele (se houver) e paramos a descida por este ramo.
+        # --- 2. NOVO: CORTAR VIA FRUSTUM CULLING DA AABB DO NÓ ---
+        # Se a caixa delimitadora deste nó (e de tudo que está abaixo dele)
+        # não estiver visível na tela, corte o galho inteiro da árvore!
+        if no.aabb_min is not None and no.aabb_max is not None:
+            if not frustum.aabb_visivel(no.aabb_min, no.aabb_max):
+                return # Ganho massivo de performance na CPU aqui!
+
+        # --- 3. TESTE DE NÓ FOLHA VAZIO ---
         if no.plano is None:
             self._desenhar_no_bsp(no, frustum)
             return
 
-        # Se o nó possui um plano, classifica a câmera e decide a ordem de renderização (Back-to-Front)
+        # Continua a travessia estrita clássica Back-to-Front
         lado = no.plano.classificar_ponto(pos_camera)
         
         if lado in ('FRENTE', 'COPLANAR'):
@@ -133,15 +136,7 @@ class RendererBSP:
         if not hasattr(no, 'vbos_locais') or not no.vbos_locais:
             return
 
-        algum_visivel = False
-        for t in no.poligonos:
-            if frustum.triangulo_visivel(t):
-                algum_visivel = True
-                break
-        
-        if not algum_visivel:
-            return
-
+        # Renderiza o VBO local do nó
         for tex_id, (vbo_id, num_verts) in no.vbos_locais.items():
             glActiveTexture(GL_TEXTURE0)
             glBindTexture(GL_TEXTURE_2D, tex_id)

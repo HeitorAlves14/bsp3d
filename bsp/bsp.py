@@ -33,6 +33,8 @@ class BSPNode:
         
         # --- NOVO PARA O PVS ---
         self.folha_id = None       # ID único se este nó for uma folha (Leaf)
+        self.aabb_min = None       # np.array([x, y, z]) mínimo da caixa delimitadora
+        self.aabb_max = None       # np.array([x, y, z]) máximo da caixa delimitadora
 
     def is_leaf(self):
         # Uma folha na árvore BSP clássica não possui plano divisor nem filhos
@@ -221,28 +223,159 @@ def construir_arvore_bsp(triangulos):
     print("[BSP] Compilando geometria inicial...")
     raiz = _construir_bsp_recursivo(triangulos)
     
-    print("[PVS] Indexando folhas convexas da sub-árvore...")
+    print("[PVS] Indexando folhas para visibilidade...")
     total_folhas = _indexar_folhas(raiz, 0)
-    print(f"[PVS] Concluído! Total de folhas indexadas para visibilidade: {total_folhas}")
-    
-    # Guardamos o total de folhas na raiz para sabermos o tamanho da matriz futuramente
     raiz.total_folhas = total_folhas
+    
+    print("[AABB] Gerando caixas delimitadoras para Frustum Culling otimizado...")
+    _calcular_aabbs_da_arvore(raiz)
+    
+    print(f"[BSP] Pronto! Total de folhas: {total_folhas}")
     return raiz
 
 
 # --- FUNÇÃO DE BUSCA DO JOGADOR ---
+def _calcular_aabbs_da_arvore(no):
+    """Calcula a AABB de cada nó de baixo para cima englobando seus polígonos e filhos"""
+    if no is None:
+        return None, None
+        
+    # Inicializa os limites com valores extremos reversos
+    p_min = np.array([float('inf'), float('inf'), float('inf')], dtype=np.float32)
+    p_max = np.array([float('-inf'), float('-inf'), float('-inf')], dtype=np.float32)
+    
+    # 1. Expande a caixa com os triângulos contidos neste nó
+    for t in no.poligonos:
+        for v in t.vertices:
+            p_min = np.minimum(p_min, v.pos)
+            p_max = np.maximum(p_max, v.pos)
+            
+    # 2. Expande com a AABB da subárvore da frente
+    if no.front:
+        f_min, f_max = _calcular_aabbs_da_arvore(no.front)
+        if f_min is not None:
+            p_min = np.minimum(p_min, f_min)
+            p_max = np.maximum(p_max, f_max)
+            
+    # 3. Expande com a AABB da subárvore de trás
+    if no.back:
+        b_min, b_max = _calcular_aabbs_da_arvore(no.back)
+        if b_min is not None:
+            p_min = np.minimum(p_min, b_min)
+            p_max = np.maximum(p_max, b_max)
+            
+    # Se o nó for uma folha completamente vazia sem polígonos, retorna None
+    if np.any(p_min == float('inf')):
+        return None, None
+        
+    no.aabb_min = p_min
+    no.aabb_max = p_max
+    return p_min, p_max
+
+
 def determinar_folha_ponto(no, ponto):
-    """Navega recursivamente para encontrar qual folha_id engloba a posição dada"""
     if no is None:
         return None
-        
     if no.is_leaf():
         return no.folha_id
+    if no.plano is None:
+        return None
         
-    # Classifica a posição (ex: a câmera do Player) em relação ao plano divisor do nó
     lado = no.plano.classificar_ponto(ponto)
-    
     if lado in ('FRENTE', 'COPLANAR'):
         return determinar_folha_ponto(no.front, ponto)
     else:
         return determinar_folha_ponto(no.back, ponto)
+
+# ---------------------------------------------------------------------------
+# CONSULTA ESPACIAL ACELERADA — colisão via BSP em vez de lista bruta
+# ---------------------------------------------------------------------------
+
+def _triangulo_relevante(t, ponto, raio_xz, raio_y):
+    """
+    Critério de relevância correto para triângulos grandes (chão, teto, paredes).
+
+    O problema com "distância ao centro" é que um chão de 20x20 unidades tem
+    seu centro a metros do ator — mas a superfície está logo abaixo dele.
+
+    Solução: medir a distância ao PLANO do triângulo (signed distance) e a
+    distância horizontal ao AABB do triângulo separadamente.
+
+      - dist_plano pequena → o ator está perto da superfície (Y relevante)
+      - projeção XZ dentro da AABB + margem → o ator está sobre o triângulo
+    """
+    # 1. Distância com sinal do ponto ao plano do triângulo
+    dist_plano = abs(np.dot(t.normal, ponto) + t.d)
+
+    # Triângulos predominantemente horizontais (chão/teto): normal.y dominante
+    # → usa raio_y para distância ao plano, raio_xz para proximidade lateral
+    normal_y = abs(t.normal[1])
+
+    if normal_y > 0.5:
+        # Superfície horizontal — o critério crítico é a distância vertical ao plano
+        if dist_plano > raio_y:
+            return False
+        # Verifica se o ator está sobre a AABB XZ do triângulo (+ margem)
+        xs = [v.pos[0] for v in t.vertices]
+        zs = [v.pos[2] for v in t.vertices]
+        margem = raio_xz * 0.5
+        if (ponto[0] < min(xs) - margem or ponto[0] > max(xs) + margem or
+                ponto[2] < min(zs) - margem or ponto[2] > max(zs) + margem):
+            return False
+        return True
+    else:
+        # Superfície vertical (parede) — distância ao plano é proximidade lateral
+        if dist_plano > raio_xz:
+            return False
+        # Verifica extensão vertical
+        ys = [v.pos[1] for v in t.vertices]
+        if ponto[1] > max(ys) + raio_y or ponto[1] < min(ys) - raio_y:
+            return False
+        return True
+
+
+def coletar_triangulos_proximos(no, ponto, raio_xz=3.0, raio_y=4.0):
+    """
+    Coleta triângulos relevantes para colisão descendo a árvore BSP.
+
+    Usa critérios separados por eixo:
+      - raio_xz: distância horizontal para paredes e extensão XZ para chão/teto
+      - raio_y:  distância vertical ao plano para superfícies horizontais
+
+    Isso resolve o problema de chão/teto serem ignorados com raio pequeno
+    (porque o centro do triângulo fica longe) sem precisar usar raio grande
+    globalmente (o que incluiria triângulos desnecessários e custosos).
+
+    Uso em main.py:
+        tri = coletar_triangulos_proximos(arvore_bsp, player.pos)
+        player.mover_horizontal_com_step(tri, lista_props, pos_x, pos_z)
+        player.atualizar_fisica_vertical(tri, lista_props)
+    """
+    if no is None:
+        return []
+
+    resultado = []
+
+    for t in no.poligonos:
+        if _triangulo_relevante(t, ponto, raio_xz, raio_y):
+            resultado.append(t)
+
+    if no.plano is None:
+        return resultado
+
+    # Distância com sinal ao plano divisor deste nó
+    dist = np.dot(no.plano.normal, ponto) + no.plano.d
+
+    # Usa o raio adequado ao tipo do plano divisor para decidir se desce um ou dois lados
+    normal_y_divisor = abs(no.plano.normal[1])
+    raio_decisao = raio_y if normal_y_divisor > 0.5 else raio_xz
+
+    if dist > raio_decisao:
+        resultado += coletar_triangulos_proximos(no.front, ponto, raio_xz, raio_y)
+    elif dist < -raio_decisao:
+        resultado += coletar_triangulos_proximos(no.back,  ponto, raio_xz, raio_y)
+    else:
+        resultado += coletar_triangulos_proximos(no.front, ponto, raio_xz, raio_y)
+        resultado += coletar_triangulos_proximos(no.back,  ponto, raio_xz, raio_y)
+
+    return resultado
