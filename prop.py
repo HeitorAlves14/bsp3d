@@ -38,35 +38,60 @@ class Prop:
         if not self.triangulos_locais:
             return
 
-        # 1. Pega o primeiro triângulo da porta para analisar a orientação
-        t = self.triangulos_locais[0]
-        
+        # 1. Em vez de pegar o primeiro triângulo da lista (que pode ser uma
+        # face fina de espessura/tampa lateral, dependendo de como o Blender
+        # exportou), procuramos o triângulo de MAIOR ÁREA. A face larga e
+        # visível da porta é sempre muito maior que as faces de espessura,
+        # então isso garante que pegamos a normal certa independente da
+        # ordem das faces no arquivo .obj.
+        t_principal = self.triangulos_locais[0]
+        maior_area = -1.0
+        for tri in self.triangulos_locais:
+            p0, p1, p2 = tri.vertices[0].pos, tri.vertices[1].pos, tri.vertices[2].pos
+            area = np.linalg.norm(np.cross(p1 - p0, p2 - p0))
+            if area > maior_area:
+                maior_area = area
+                t_principal = tri
+
         # A normal nos diz para onde a face "olha" (perpendicular)
-        normal = t.normal 
+        normal = t_principal.normal 
         
         # 2. Criamos o vetor de deslizamento horizontal (paralelo à porta)
         # Fazemos o produto vetorial entre a Normal e o vetor Up global (0, 1, 0).
         # Isso nos dá um vetor que corre perfeitamente ao longo da parede da porta!
-        direcao_deslizamento = np.cross(normal, np.array([0.0, 1.0, 0.0]))
-        
-        # Normaliza o vetor para ter tamanho 1
-        norma = np.linalg.norm(direcao_deslizamento)
-        if norma != 0:
-            direcao_deslizamento /= norma
+        up = np.array([0.0, 1.0, 0.0])
 
-        # 3. Descobre o sinal (+ ou -) baseado na tag do Blender
+        # Eixo X local da porta
+        eixo_x_local = np.cross(normal, up)
+        norma_x = np.linalg.norm(eixo_x_local)
+
+        if norma_x > 0:
+            eixo_x_local /= norma_x
+
+        # Eixo Z local da porta
+        eixo_z_local = normal.copy()
+        eixo_z_local[1] = 0.0
+
+        norma_z = np.linalg.norm(eixo_z_local)
+
+        if norma_z > 0:
+            eixo_z_local /= norma_z
+
         sinal = -1.0 if '-' in self.nome else 1.0
-        
-        # Se a tag pedir movimento vertical (ex: door+y ou door-y), ignoramos a diagonal horizontal
-        if 'x' in self.nome.lower():
-            vetor_movimento = np.array([1.0, 0.0, 0.0]) * sinal
-        if 'y' in self.nome.lower():
+
+        nome_lower = self.nome.lower()
+
+        if 'y' in nome_lower:
             vetor_movimento = np.array([0.0, 1.0, 0.0]) * sinal
-        if 'z' in self.nome.lower():
-            vetor_movimento = np.array([0.0, 0.0, 1.0]) * sinal
+
+        elif 'x' in nome_lower:
+            vetor_movimento = eixo_x_local * sinal
+
+        elif 'z' in nome_lower:
+            vetor_movimento = eixo_z_local * sinal
+
         else:
-            # Caso contrário, ela corre no seu próprio eixo horizontal calculado!
-            vetor_movimento = direcao_deslizamento * sinal
+            vetor_movimento = eixo_x_local * sinal
 
         # 4. Define a posição final absoluta no mundo
         self.pos_alvo = self.pos_original + (vetor_movimento * self.distancia_movimento)
