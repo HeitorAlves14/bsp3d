@@ -1,5 +1,5 @@
 import os
-from gerenciador_textura import carregar_textura
+from scripts.gerenciador_textura import carregar_textura
 
 def carregar_materiais(caminho_mtl):
     """Lê o arquivo .mtl e carrega todas as texturas associadas na GPU"""

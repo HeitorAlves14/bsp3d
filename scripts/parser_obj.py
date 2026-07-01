@@ -1,8 +1,8 @@
 import os
 import numpy as np
-from geometria import Vertice, Triangulo
-from parser_mtl import carregar_materiais
-from prop import Prop
+from scripts.geometria import Vertice, Triangulo
+from scripts.parser_mtl import carregar_materiais
+from scripts.prop import Prop
 
 def carregar_mapa_blender(caminho_arquivo):
     vertices_pos_global = []

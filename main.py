@@ -6,17 +6,17 @@ from pygame.locals import *
 from OpenGL.GL import *
 from OpenGL.GLU import *
 
-from parser_obj import carregar_mapa_blender
-from gerenciador_textura import carregar_textura
+from scripts.parser_obj import carregar_mapa_blender
+from scripts.gerenciador_textura import carregar_textura
 from bsp.bsp import construir_arvore_bsp, coletar_triangulos_proximos
-from player import Player
-from inimigo import Inimigo
-from frustum import Frustum
-from hud import desenhar_arma_hud
-from particula import Particula
-from coletavel import Coletavel
-from shader_manager import GerenciadorShader, LuzPontual
-from renderer_shader import RendererBSP, RendererProps
+from scripts.player import Player
+from scripts.inimigo import Inimigo
+from scripts.frustum import Frustum
+from scripts.hud import desenhar_arma_hud
+from scripts.particula import Particula
+from scripts.coletavel import Coletavel
+from scripts.shader_manager import GerenciadorShader, LuzPontual
+from scripts.renderer_shader import RendererBSP, RendererProps
 
 
 # --- CONFIGURAÇÕES DA JANELA ---
@@ -165,21 +165,21 @@ def main():
     # Carregue qualquer imagem quadrada (ex: 256x256 ou 512x512 pixels) para teste 
     
     # Carrega o mapa passando o ID da textura
-    triangulos_brutos, lista_props = carregar_mapa_blender("escritorio.obj")
+    triangulos_brutos, lista_props = carregar_mapa_blender("maps/teste.obj")
     
     # Carrega a imagem do monstro (garanta que o OpenGL esteja com GL_BLEND ativo para transparência!)
-    id_tex_inimigo = carregar_textura("options.png")
+    id_tex_inimigo = carregar_textura("textures/options.png")
     
     lista_inimigos = [
         Inimigo(x=5.0, y=1.0, z=-5.0, textura_id=id_tex_inimigo),
         Inimigo(x=-3.0, y=1.0, z=-8.0, textura_id=id_tex_inimigo)
     ]
-    tex_arma_idle = carregar_textura("options.png")
-    tex_arma_shoot = carregar_textura("muito engracado.png")
+    tex_arma_idle = carregar_textura("textures/arma.png")
+    tex_arma_shoot = carregar_textura("textures/arma_tiro.png")
 
     # Carrega as imagens dos itens (PNGs transparentes)
-    tex_kit_medico = carregar_textura("gidao.png")
-    tex_municao = carregar_textura("gidao.png")
+    tex_kit_medico = carregar_textura("textures/kit_medico.png")
+    tex_municao = carregar_textura("textures/gidao.png")
     
     lista_coletaveis = [
         Coletavel(x=2.0, y=0.0, z=-3.0, tipo='VIDA', textura_id=tex_kit_medico, quantidade=25),

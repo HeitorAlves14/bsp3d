@@ -1,7 +1,7 @@
 import numpy as np
 import math
 from OpenGL.GL import *
-from ator import Ator
+from scripts.ator import Ator
 
 
 class Inimigo(Ator):

@@ -1,6 +1,6 @@
 import numpy as np
 import math
-from ator import Ator
+from scripts.ator import Ator
 
 
 class Player(Ator):
